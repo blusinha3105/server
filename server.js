@@ -14,7 +14,7 @@ const config = require('./config');
 const { vpsUrl } = require('./config');
 const compression = require('compression');
 const cron = require('node-cron');
-const puppeteer = require('puppeteer-core');
+const puppeteer = require('puppeteer');
 const fetch = require('node-fetch');
 app.use(compression());
 app.use(bodyParser.json({ limit: '50mb' })); // Define o limite máximo para 50MB
@@ -1609,7 +1609,7 @@ app.get('/episodio/:animeId/:numero', (req, res) => {
             e.capa_ep,
             e.alertanovoep,
             a.id AS anime_id,
-            a.capa AS capa,
+            a.capa AS anime_capa,
             a.titulo AS anime_titulo,
             a.genero AS anime_genero  -- Presumindo que os gêneros são armazenados como uma string separada por vírgulas
         FROM 
@@ -1639,8 +1639,8 @@ app.get('/episodio/:animeId/:numero', (req, res) => {
 
         res.status(200).json({
             anime: { 
+                capa: row.anime_capa,
                 animeid: row.anime_id,
-                capa: row.capa,
                 titulo: row.anime_titulo, 
                 generos: generos
             },
@@ -1750,8 +1750,8 @@ app.get('/pesquisa/termo', (req, res) => {
 
         // 🚀 Converter 'genero' para 'generos' como um array
         animes.forEach(anime => {
-            anime.generos = anime.genero ? anime.genero.split(',').map(genero => genero.trim()) : []; // Converte para array
-            delete anime.genero; // Remove o campo antigo 'genero'
+            anime.generos = anime.genero ? anime.genero.split(',').map(genero => genero.trim()) : [];
+            anime.genero = anime.generos.join(', '); // Mantém compatibilidade
         });
 
         // Ordenar os episódios de cada anime em ordem crescente pelo número do episódio
@@ -2327,14 +2327,15 @@ app.post('/enviarAviso', (req, res) => {
 const sites = {
     'animesorionvip.net': async (inicio) => {
         try {
+            const chromePath = puppeteer.executablePath();
             const browser = await puppeteer.launch({
-                executablePath: '/usr/bin/google-chrome',
+                executablePath: chromePath, // Usa o caminho detectado
                 headless: true,
                 args: ['--no-sandbox', '--disable-setuid-sandbox']
             });
             const page = await browser.newPage();
             const url = `https://animesorionvip.net/animes/${inicio}`;
-            await page.goto(url);
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
             // Aguarda a carga da div com id 'episodio_box'
             await page.waitForSelector('#episodio_box');
@@ -2392,14 +2393,15 @@ const sites = {
 
     'animesonline.fan': async (inicio) => {
         try {
+            const chromePath = puppeteer.executablePath();
             const browser = await puppeteer.launch({
-                executablePath: '/usr/bin/google-chrome',
+                executablePath: chromePath, // Usa o caminho detectado
                 headless: true,
                 args: ['--no-sandbox', '--disable-setuid-sandbox']
             });
             const page = await browser.newPage();
             const url = `https://animesonline.fan/${inicio}`;
-            await page.goto(url);
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
     
             // Aguarda a carga da div com a classe 'meio-conteudo'
             await page.waitForSelector('.meio-conteudo');
@@ -2484,14 +2486,16 @@ const sites = {
      
     'animeq.blog': async (inicio) => {
         try {
+            console.log('Chromium Path:', puppeteer.executablePath());
+            const chromePath = puppeteer.executablePath();
             const browser = await puppeteer.launch({
-                executablePath: '/usr/bin/google-chrome',
+                executablePath: chromePath, // Usa o caminho detectado
                 headless: true,
                 args: ['--no-sandbox', '--disable-setuid-sandbox']
             });
             const page = await browser.newPage();
             const url = `https://animeq.blog/${inicio}`;
-            await page.goto(url);
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
             // Aguarda a carga da div com a classe 'ListaContainer'
             await page.waitForSelector('.ListaContainer');
@@ -2515,7 +2519,7 @@ const sites = {
 
             const processEpisode = async ({ link, episodio }) => {
                 const episodePage = await browser.newPage();
-                await episodePage.goto(link);
+                await episodePage.goto(link, {waitUntil: "domcontentloaded"});
             
 
                 // Aguarda o carregamento do elemento com o ID 'preroll'
@@ -2595,10 +2599,11 @@ const sites = {
             
             // Processa os links em grupos de 10
             // Processa os links em grupos de 10
-            for (let i = 0; i < episodeLinks.length; i += 10) {
-                const group = episodeLinks.slice(i, i + 10);
+            for (let i = 0; i < episodeLinks.length; i += 2) {
+                const group = episodeLinks.slice(i, i + 2);
                 await Promise.all(group.map(processEpisode));
             }
+            
                         
         
             await browser.close();
@@ -2613,8 +2618,9 @@ const sites = {
 
     'goyabu.to': async (inicio) => {
         try {
+            const chromePath = puppeteer.executablePath();
             const browser = await puppeteer.launch({
-                executablePath: '/usr/bin/google-chrome',
+                executablePath: chromePath, // Usa o caminho detectado
                 headless: true,
                 args: ['--no-sandbox', '--disable-setuid-sandbox']
             });
@@ -2685,7 +2691,6 @@ const sites = {
     'animesgames.cc': async (inicio) => {
         try {
             const browser = await puppeteer.launch({
-                executablePath: '/usr/bin/google-chrome',
                 headless: true,
                 args: ['--no-sandbox', '--disable-setuid-sandbox']
             });
@@ -2791,7 +2796,7 @@ app.get('/scrape/:site/:inicio', async (req, res) => {
         const scrapeFunction = sites[site];
         const data = await scrapeFunction(inicio);
 
-        res.send(data);
+        res.json(data);
     } catch (error) {
         console.error('Erro:', error);
         res.status(500).send('Ocorreu um erro ao tentar acessar os episódios.');
@@ -3052,18 +3057,11 @@ app.post('/adicionarEpisodio', (req, res) => {
 app.get('/buscarEpisodios', async (req, res) => {
     const resultados = [];
 
-    // Inicializa o Puppeteer
-    // Inicializa o Puppeteer
+    const chromePath = puppeteer.executablePath();
     const browser = await puppeteer.launch({
-        executablePath: '/usr/bin/google-chrome',
+        executablePath: chromePath, // Usa o caminho detectado
         headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-web-security', // Adiciona essa linha
-            '--disable-features=IsolateOrigins,site-per-process', // Adiciona essa linha
-            '--enable-features=NetworkService,NetworkServiceInProcess' // Adiciona essa linha
-        ]
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
     const sites = [
         { url: 'https://animeq.blog/' }
@@ -3648,15 +3646,7 @@ function excluirSuportesAntigos() {
 }
 
 
-cron.schedule('0 0 * * *', () => {
-    console.log('Atualizando estatísticas...');
-    updateStatistics();
-});
 
-cron.schedule('0 0 */30 * *', () => {
-    console.log('Executando limpeza de dados antigos...');
-    excluirSuportesAntigos();
-});
 
 /// Iniciar o servidor
 app.listen(PORT, () => {
